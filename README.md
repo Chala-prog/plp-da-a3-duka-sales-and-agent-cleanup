@@ -10,11 +10,13 @@ Two client engagements in one repository.
 ## Regenerate the data and run
 ```bash
 pip install -r requirements.txt
-python generate_data.py        # Duka (seed 2026) + agents (seed 44); writes the 3 CSVs
-jupyter nbconvert --to notebook --execute --inplace duka_sales_exploration.ipynb
-jupyter nbconvert --to notebook --execute --inplace agent_cleanup.ipynb
+python generate_data.py        # Duka (seed 2026) + agents (seed 44); writes duka_sales.csv, agents.csv, agent_transactions.csv
+python build_duka.py           # Engagement 1: rebuilds notebook, Excel workbook (with real PivotTable) and premium CSV from duka_sales.csv
+jupyter nbconvert --to notebook --execute --inplace agent_cleanup.ipynb   # Engagement 2 (imports cleaning_pipeline.py)
 ```
-Do not change the seeds.
+Do not change the seeds. `build_duka.py` needs LibreOffice (`soffice`) only to create the PivotTable; `duka_sales_exploration.ipynb` can also be opened and run on its own in Jupyter.
+
+> **Note on Part A of `generate_data.py`:** it currently holds a clearly-marked stand-in Duka generator. Before submitting, paste the course Practicals generator (seed 2026) there unchanged and re-run `python build_duka.py`, then refresh the Executive Summary below.
 
 ## Engagement 2 — before/after row count
 | Stage | Rows |
