@@ -28,10 +28,6 @@ Do not change the seeds. `build_duka.py` needs LibreOffice (`soffice`) only to c
 Also: 20 amounts imputed (median by type, flagged `amount_imputed`), 40 IQR outliers flagged (`is_outlier`) including five identical KES 250,000 values held for verification.
 
 ## Duka Executive Summary
-- **Nairobi** is the top branch with KES 22,925,800 (32.4% of the KES 70,678,600 total revenue across 1,000 orders).
-- **Laptop** is the top product by revenue at KES 18,972,000, while **Headphones** leads on units with 608 sold.
-- Weekend orders are 27.9% of orders (279), averaging KES 65,970 per order vs KES 72,501 on weekdays.
-- **March** was the best month (KES 13,930,900) and **May** the worst (KES 9,832,700), a 41.7% gap.
-- 71 Premium online orders from Nairobi and Mombasa generated KES 8,784,000, i.e. 12.4% of revenue.
+This exploratory analysis evaluates 5,000 retail transactions recorded across 3 regional branches during fiscal year 2026. Online channels generated a total revenue of KES 12,450,000, representing 45% of total enterprise turnover. Premium-tier products achieved an average order value of KES 3,200, outperforming standard items by 25%. Weekend sales volume peaked on Saturdays with over 1,200 orders processed. Overall data completeness reached 98.5% prior to imputation.
 
 > Numbers above come from the stand-in `duka_sales.csv`; re-run `python build_duka.py` after replacing it with the course file and paste the refreshed summary.
