@@ -83,6 +83,35 @@ chk = load_workbook("/tmp/lo/duka_branch_summary.xlsx", data_only=True)
 rows = [(r[1], r[2], r[3]) for r in chk["Branch_Summary"].iter_rows(min_row=2, max_row=last, values_only=True)]
 pd.DataFrame(rows, columns=["branch","sumifs_revenue","countifs_orders"]).to_csv("excel/sumifs_recalc_check.csv", index=False)
 
+# ---- store the computed results as the cached values of the Branch_Summary formulas, so every viewer
+# (GitHub tools, Python, LibreOffice older than 24.8 which has no XLOOKUP) shows numbers. Excel still
+# recalculates everything on open because fullCalcOnLoad is set.
+import zipfile, re
+def add_cached_values(path, values):
+    src = zipfile.ZipFile(path); tmp = path + ".tmp"
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename.startswith("xl/worksheets/sheet") and b"Total revenue (SUMIFS)" in data:
+                xml = data.decode("utf-8")
+                for ref, val in values.items():
+                    text = isinstance(val, str)
+                    pattern = re.compile(r'<c r="' + ref + r'"([^>]*)>(<f>.*?</f>)<v></v></c>', re.S)
+                    def fill_in(m, text=text, val=val):
+                        kind = ' t="str"' if text else ""
+                        return '<c r="' + ref + '"' + m.group(1) + kind + ">" + m.group(2) + "<v>" + str(val) + "</v></c>"
+                    xml, hits = pattern.subn(fill_in, xml)
+                    assert hits == 1, ref
+                data = xml.encode("utf-8")
+            dst.writestr(item, data)
+    src.close(); os.replace(tmp, path)
+
+cached = {}
+for i, b in enumerate(br_rev.index, start=2):
+    cached[f"C{i}"] = int(br.rev[b]); cached[f"D{i}"] = int(br.orders[b]); cached[f"E{i}"] = regions.get(b, "Unknown")
+cached[f"C{last+1}"] = int(br.rev.sum()); cached[f"D{last+1}"] = int(br.orders.sum())
+add_cached_values("excel/duka_branch_summary.xlsx", cached)
+
 # ---- Notebook
 nb = nbf.v4.new_notebook(); C = []
 md = lambda s: C.append(nbf.v4.new_markdown_cell(s)); code = lambda s: C.append(nbf.v4.new_code_cell(s))
