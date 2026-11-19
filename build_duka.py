@@ -1,11 +1,12 @@
 """Rebuilds ALL Engagement-1 deliverables from duka_sales.csv.
 Expected columns: order_id, order_date, branch, product, channel, units, unit_price
 Usage: python build_duka.py   (then notebook is executed automatically)"""
-import subprocess, shutil, os
+import subprocess, shutil, os, sys
 import pandas as pd, numpy as np, nbformat as nbf
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
+STANDIN = ">>> STAND-IN" in open("generate_data.py").read()   # notes about stand-in data show only until the course generator is pasted
 df = pd.read_csv("duka_sales.csv", parse_dates=["order_date"])
 need = {"order_id","order_date","branch","product","channel","units","unit_price"}
 assert need <= set(df.columns), f"missing columns: {need-set(df.columns)}"
@@ -49,15 +50,30 @@ for i,b in enumerate(br_rev.index, start=2):
 last = len(br)+1
 ws.append(["", "TOTAL", f"=SUM(C2:C{last})", f"=SUM(D2:D{last})"])
 for c in ws[1]: c.font = Font(bold=True, color="FFFFFF"); c.fill = PatternFill("solid", fgColor="305496")
-pv = wb.create_sheet("Pivot_Branch_Channel")
-chs = sorted(df.channel.unique()); pv.append(["Branch"]+chs+["Grand total"])
-for i,b in enumerate(br_rev.index, start=2):
-    pv.append([b]+[f'=SUMIFS(Data!$H$2:$H${n},Data!$C$2:$C${n},$A{i},Data!$E$2:$E${n},{chr(66+j)}$1)' for j in range(len(chs))]+[f"=SUM(B{i}:{chr(65+len(chs))}{i})"])
-pv.append(["Grand total"]+[f"=SUM({chr(66+j)}2:{chr(66+j)}{last})" for j in range(len(chs)+1)])
-for c in pv[1]: c.font = Font(bold=True)
-for w in (ws, pv): w.column_dimensions["A"].width = 14; w.column_dimensions["B"].width = 16; w.column_dimensions["C"].width = 24; w.column_dimensions["D"].width = 20; w.column_dimensions["E"].width = 20
+for w in (ws,): w.column_dimensions["A"].width = 14; w.column_dimensions["B"].width = 16; w.column_dimensions["C"].width = 24; w.column_dimensions["D"].width = 20; w.column_dimensions["E"].width = 20
+# 1) workbook with Data + Regions only -> LibreOffice adds a REAL PivotTable -> 2) openpyxl re-opens it (pivot preserved) and adds the formula sheet
+tmp = Workbook(); t0 = tmp.active; t0.title = "Data"
+for row in wd.iter_rows(values_only=True): t0.append(list(row))
+tmp.save("/tmp/duka_base.xlsx")
+subprocess.run(["python3","make_pivot.py","/tmp/duka_base.xlsx","/tmp/duka_pivot.xlsx",str(n)],check=True)
+from openpyxl import load_workbook
+pvwb = load_workbook("/tmp/duka_pivot.xlsx", data_only=True)
+pcells = [[c for c in r] for r in pvwb["Pivot_Branch_Channel"].iter_rows(values_only=True)]
+pcells = [r for r in pcells if any(x is not None for x in r)]
+pd.DataFrame(pcells).to_csv("excel/pivot_recalc_check.csv", index=False, header=False)
+wb2 = load_workbook("/tmp/duka_pivot.xlsx")
+for name in ("Branch_Summary","Regions"):
+    new = wb2.create_sheet(name, 0 if name=="Branch_Summary" else None)
+    for row in wb[name].iter_rows():
+        for c in row: 
+            nc = new.cell(row=c.row, column=c.column, value=c.value)
+            if c.font and c.font.bold: nc.font = Font(bold=True, color=c.font.color.rgb if c.font.color else None); 
+            if c.fill and c.fill.fgColor and c.fill.fgColor.rgb not in (None,"00000000"): nc.fill = PatternFill("solid", fgColor=c.fill.fgColor.rgb)
+    for k,v in wb[name].column_dimensions.items(): new.column_dimensions[k].width = v.width
+wb = wb2
 wb.calculation.fullCalcOnLoad = True
 wb.save("excel/duka_branch_summary.xlsx")
+print("sheets:", wb.sheetnames, "| pivots:", len(wb["Pivot_Branch_Channel"]._pivots))
 # verify SUMIFS/COUNTIFS via LibreOffice recalculation of a temp copy
 os.makedirs("/tmp/lo", exist_ok=True)
 subprocess.run(["soffice","--headless","--convert-to","xlsx","--outdir","/tmp/lo","excel/duka_branch_summary.xlsx"],capture_output=True)
@@ -65,8 +81,6 @@ from openpyxl import load_workbook
 chk = load_workbook("/tmp/lo/duka_branch_summary.xlsx", data_only=True)
 rows = [(r[1], r[2], r[3]) for r in chk["Branch_Summary"].iter_rows(min_row=2, max_row=last, values_only=True)]
 pd.DataFrame(rows, columns=["branch","sumifs_revenue","countifs_orders"]).to_csv("excel/sumifs_recalc_check.csv", index=False)
-pcells = [list(r) for r in chk["Pivot_Branch_Channel"].iter_rows(min_row=1, values_only=True)]
-pd.DataFrame(pcells[1:], columns=pcells[0]).to_csv("excel/pivot_recalc_check.csv", index=False)
 
 # ---- Notebook
 nb = nbf.v4.new_notebook(); C = []
@@ -88,8 +102,9 @@ print("\\ndate range:", df.order_date.min().date(), "to", df.order_date.max().da
 for c in ["branch","product","channel"]: print("\\n", df[c].value_counts().to_dict())
 print("duplicate order_id:", df.order_id.duplicated().sum())
 df.describe()''')
+note = "\n> **Data-source note:** Part A of `generate_data.py` is still the stand-in generator, so every number here is provisional." if STANDIN else ""
 md(f"""**Inspection notes.** {raw_shape[0]:,} rows × {raw_shape[1]} columns. `order_date` parsed to datetime (range {ds} → {de}); ({df.isna().sum().sum()} nulls, {df.order_id.duplicated().sum()} duplicates). Categories: {df.branch.nunique()} branches, {df["product"].nunique()} products, channels {', '.join(sorted(df.channel.unique()))}.
-> **Data-source note:** `duka_sales.csv` in this build is a stand-in (`standin_duka_generator.py`). Replace it with the course-generated file and run `python build_duka.py` to refresh every number below.""")
+{note}""")
 md("## Task 2 · Derived columns")
 code('''df["revenue"] = df["units"] * df["unit_price"]
 df["month"] = df["order_date"].dt.month_name()
@@ -104,8 +119,17 @@ b["avg_order_value"] = b.total_revenue/b.orders
 b["rank_revenue"] = b.total_revenue.rank(ascending=False).astype(int)
 b["rank_orders"] = b.orders.rank(ascending=False, method="min").astype(int)
 b.sort_values("total_revenue", ascending=False)''')
-expl = ("The two rankings are identical here: order volume and revenue move together because average order values are similar across branches." if same else
-        f"The rankings differ. **{bl}** leads on revenue but **{bo}** leads on orders: revenue = orders × average order value, so a branch with fewer orders can out-earn one with more if it sells higher-priced items (e.g. {bl} AOV {K(br.aov[bl])} vs {bo} {K(br.aov[bo])}).")
+r = list(br_rev.index)
+swap = next(((r[a], r[b]) for a in range(len(r)) for b in range(a+1, len(r)) if br.orders[r[a]] < br.orders[r[b]]), None)
+if same:
+    expl = "The two rankings are identical here: order volume and revenue move together because average order values are similar across branches."
+else:
+    lead = (f"**{bl}** is first on both lists, but the order changes further down." if bl == bo
+            else f"**{bl}** leads on revenue but **{bo}** leads on orders.")
+    x, y = swap
+    expl = (f"The rankings differ. {lead} For example, **{x}** out-earns **{y}** ({K(br.rev[x])} vs {K(br.rev[y])}) "
+            f"despite fewer orders ({br.orders[x]:,} vs {br.orders[y]:,}), because revenue = orders × average order value "
+            f"and {x}'s average order is larger ({K(br.aov[x])} vs {K(br.aov[y])}).")
 md(f"**Answer.** By revenue: {' > '.join(br_rev.index)}. By orders: {' > '.join(br_ord.index)}. {expl}")
 md("## Task 4 · Top three products")
 code('''p = df.groupby("product").agg(revenue=("revenue","sum"), units=("units","sum"))
@@ -133,16 +157,20 @@ md("## Task 8 · Excel reconciliation (`excel/duka_branch_summary.xlsx`)")
 code('''xl = pd.read_csv("excel/sumifs_recalc_check.csv").set_index("branch")      # SUMIFS/COUNTIFS values recalculated from the workbook
 cmp = b[["total_revenue","orders"]].join(xl)
 cmp["match"] = np.isclose(cmp.total_revenue, cmp.sumifs_revenue) & (cmp.orders == cmp.countifs_orders)
-pv = pd.read_csv("excel/pivot_recalc_check.csv").set_index("Branch")
+raw = pd.read_csv("excel/pivot_recalc_check.csv", header=None)         # values of the real PivotTable in the workbook
+hdr_i = raw.index[raw.iloc[:,0].astype(str).str.contains("branch", case=False)][-1]
+pv = raw.iloc[hdr_i+1:].copy(); pv.columns = ["branch"]+list(raw.iloc[hdr_i,1:]); pv = pv.set_index("branch")
 pd_pivot = df.pivot_table(index="branch", columns="channel", values="revenue", aggfunc="sum")
+ok = np.allclose(pv.loc[pd_pivot.index, pd_pivot.columns].astype(float), pd_pivot)
+tot = pv.loc[pv.index.str.contains("Total", case=False)].iloc[0].astype(float).iloc[-1]
 print("SUMIFS = pandas for every branch:", cmp.match.all(), "| grand total:", f"{xl.sumifs_revenue.sum():,.0f} vs {df.revenue.sum():,.0f}")
-print("Branch×channel table = pandas pivot:", np.allclose(pv.loc[pd_pivot.index, pd_pivot.columns].astype(float), pd_pivot))
+print("PivotTable branch×channel = pandas pivot:", ok, "| pivot grand total:", f"{tot:,.0f}")
 cmp''')
-md("**Answer.** The workbook has `Branch_Summary` (SUMIFS revenue + COUNTIFS orders + XLOOKUP region from the `Regions` sheet) and `Pivot_Branch_Channel` (branch × channel revenue). The check above shows every total equals pandas.")
+md("**Answer.** The workbook has `Branch_Summary` (SUMIFS revenue + COUNTIFS orders + XLOOKUP region from the `Regions` sheet) and `Pivot_Branch_Channel` (a real PivotTable: branch rows × channel columns, sum of revenue). The check above shows every total equals pandas.")
 nb["cells"] = C; nbf.write(nb, "duka_sales_exploration.ipynb")
-subprocess.run(["jupyter","nbconvert","--to","notebook","--execute","--inplace","duka_sales_exploration.ipynb"],capture_output=True)
+subprocess.run([sys.executable,"-m","jupyter","nbconvert","--to","notebook","--execute","--inplace","duka_sales_exploration.ipynb"],capture_output=True)
 exec_sum = C[1].source
 r = open("README.md").read()
 head = r.split("## Duka Executive Summary")[0]
-open("README.md","w").write(head+"## Duka Executive Summary\n"+exec_sum.replace("## Executive Summary\n","")+"\n\n> Numbers above come from the stand-in `duka_sales.csv`; re-run `python build_duka.py` after replacing it with the course file and paste the refreshed summary.\n")
+open("README.md","w").write(head+"## Duka Executive Summary\n"+exec_sum.replace("## Executive Summary\n","")+("\n\n> Numbers above come from the stand-in generator; paste the course generator into `generate_data.py` and re-run `python generate_data.py && python build_duka.py`.\n" if STANDIN else "\n"))
 print(exec_sum)

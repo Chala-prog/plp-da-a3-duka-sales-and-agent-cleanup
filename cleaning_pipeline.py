@@ -1,112 +1,153 @@
-import pandas as pd
+"""Cleaning pipeline for the mobile-money agent transaction extract."""
 import numpy as np
+import pandas as pd
 
-def clean_agent_data(txns: pd.DataFrame, agents: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+VALID_TYPES = {"deposit": "Deposit", "withdrawal": "Withdrawal"}
+INVALID_STRINGS = {"", "n/a", "na", "null", "none", "nan", "-"}
+
+
+def load_raw(txn_path="agent_transactions.csv", agent_path="agents.csv"):
+    """Read both files as text so nothing is silently coerced.
+    Only truly empty cells become NaN; the text 'N/A' is preserved for the audit."""
+    kw = dict(dtype=str, keep_default_na=False, na_values=[""])
+    return pd.read_csv(txn_path, **kw), pd.read_csv(agent_path, **kw)
+
+
+def _amount_numeric(s):
+    """Return numeric amount; NaN for missing or non-numeric placeholders."""
+    s = s.astype("string").str.strip()
+    s = s.mask(s.str.lower().isin(INVALID_STRINGS))
+    return pd.to_numeric(s, errors="coerce")
+
+
+def _dates(s):
+    """Normalise '/' separators then parse as ISO; unparseable -> NaT."""
+    s = s.astype("string").str.strip().str.replace("/", "-", regex=False)
+    return pd.to_datetime(s, format="%Y-%m-%d", errors="coerce")
+
+
+def _iqr_bounds(x, k=1.5):
+    q1, q3 = x.quantile([0.25, 0.75])
+    iqr = q3 - q1
+    return q1 - k * iqr, q3 + k * iqr
+
+
+def audit_data(txns, agents):
+    """Data-quality audit on the RAW extract. Returns DataFrame:
+    issue, dimension, column, rows_affected."""
+    t = txns.copy()
+    amt_raw = t["amount"].astype("string")
+    amt_num = _amount_numeric(t["amount"])
+    clean_dates = t["txn_date"].astype("string")
+    typ = t["txn_type"].astype("string")
+    norm_typ = typ.str.strip().str.lower()
+    lo, hi = _iqr_bounds(amt_num.dropna())
+    rows = [
+        ("Fully duplicated rows (same txn_id and all fields)", "Uniqueness", "all columns",
+         int(t.duplicated(keep="first").sum())),
+        ("Repeated txn_id (includes duplicates whose agent_id differs)", "Uniqueness", "txn_id",
+         int(t["txn_id"].duplicated(keep="first").sum())),
+        ("txn_type inconsistent case / trailing whitespace", "Consistency", "txn_type",
+         int((typ != typ.str.strip().str.title()).sum())),
+        ("txn_type outside {Deposit, Withdrawal} after normalising", "Validity", "txn_type",
+         int((~norm_typ.isin(VALID_TYPES) ).sum())),
+        ("amount missing (empty cell)", "Completeness", "amount", int(amt_raw.isna().sum())),
+        ("amount is text placeholder ('N/A')", "Validity", "amount",
+         int(amt_raw.str.strip().str.lower().isin(INVALID_STRINGS - {""}).sum())),
+        ("amount stored as text, not numeric", "Validity", "amount", int(amt_raw.notna().sum())),
+        ("amount is IQR outlier (> Q3+1.5*IQR)", "Accuracy", "amount", int((amt_num > hi).sum())),
+        ("amount equals exactly 250,000 (repeated suspicious value)", "Accuracy", "amount",
+         int((amt_num == 250000).sum())),
+        ("txn_date uses '/' instead of ISO '-' separator", "Consistency", "txn_date",
+         int(clean_dates.str.contains("/", na=False).sum())),
+        ("txn_date unparseable", "Validity", "txn_date", int(_dates(t["txn_date"]).isna().sum())),
+        ("agent_id not in agent register (e.g. AG099)", "Integrity / Consistency", "agent_id",
+         int((~t["agent_id"].isin(agents["agent_id"])).sum())),
+        ("Duplicate agent_id in register", "Uniqueness", "agents.agent_id",
+         int(agents["agent_id"].duplicated().sum())),
+    ]
+    return pd.DataFrame(rows, columns=["issue", "dimension", "column", "rows_affected"])
+
+
+def clean_agent_data(txns, agents):
+    """Clean the agent transaction extract and merge it with the agent register.
+
+    Rules applied (all rule-based, no hard-coded rows):
+      1. Uniqueness   - drop repeated txn_id (keep first).
+      2. Consistency  - strip/lower txn_type and map to {'Deposit','Withdrawal'}.
+      3. Validity     - amount -> numeric ('N/A' etc. -> NaN); txn_date '/' -> '-' then datetime.
+      4. Completeness - missing/invalid amount imputed with the median of valid,
+                        non-outlier amounts of the same txn_type; flagged in `amount_imputed`.
+      5. Accuracy     - IQR (1.5x) outlier flag `is_outlier` on genuinely observed amounts.
+      6. Integrity    - left-join to register for `county`; unknown agents kept with
+                        county='Unknown' and `unknown_agent`=True.
+
+    Parameters
+    ----------
+    txns : DataFrame  raw transactions (txn_id, agent_id, txn_type, amount, txn_date)
+    agents : DataFrame agent register (agent_id, county, onboarded)
+
+    Returns
+    -------
+    (clean_df, log) : cleaned DataFrame and a log DataFrame (step, rule, rows_affected, rows_after).
     """
-    Cleans agent transactions and agent network data programmatically.
-    
-    Parameters:
-        txns (pd.DataFrame): Raw agent transactions dataframe.
-        agents (pd.DataFrame): Raw agents dataframe.
-        
-    Returns:
-        clean_df (pd.DataFrame): Fully cleaned and merged dataframe with required flag columns.
-        log (pd.DataFrame): Audit log recording cleaning steps, dimensions, and affected row counts.
-    """
-    log_records = []
-    
-    # Create working copies to prevent SettingWithCopyWarning
-    df_txns = txns.copy()
-    df_agents = agents.copy()
-    
-    # 1. Uniqueness: Remove duplicate transaction IDs
-    if 'txn_id' in df_txns.columns:
-        initial_count = len(df_txns)
-        duplicates_count = df_txns.duplicated(subset=['txn_id']).sum()
-        df_txns = df_txns.drop_duplicates(subset=['txn_id'], keep='first')
-        log_records.append({
-            "issue": "Duplicate transaction IDs",
-            "dimension": "Uniqueness",
-            "column": "txn_id",
-            "rows_affected": int(duplicates_count)
-        })
-        
-    # 2. Consistency: Standardize transaction type values
-    if 'txn_type' in df_txns.columns:
-        df_txns['txn_type'] = df_txns['txn_type'].astype(str).str.strip().str.capitalize()
-        df_txns['txn_type'] = df_txns['txn_type'].replace({
-            'Dep': 'Deposit',
-            'With': 'Withdrawal',
-            'Deposits': 'Deposit',
-            'Withdrawals': 'Withdrawal'
-        })
-        
-    # 3. Completeness: Handle missing/invalid amounts & create imputation flag
-    df_txns['amount_imputed'] = False
-    if 'amount' in df_txns.columns:
-        df_txns['amount'] = pd.to_numeric(df_txns['amount'], errors='coerce')
-        missing_mask = df_txns['amount'].isna()
-        missing_count = missing_mask.sum()
-        
-        if missing_count > 0:
-            # Impute missing amounts using median grouped by transaction type
-            median_by_type = df_txns.groupby('txn_type')['amount'].transform('median')
-            df_txns.loc[missing_mask, 'amount'] = median_by_type[missing_mask]
-            # Fallback to overall median if group median is NaN
-            overall_median = df_txns['amount'].median()
-            df_txns['amount'] = df_txns['amount'].fillna(overall_median)
-            
-            df_txns.loc[missing_mask, 'amount_imputed'] = True
-            log_records.append({
-                "issue": "Missing transaction amounts imputed",
-                "dimension": "Completeness",
-                "column": "amount",
-                "rows_affected": int(missing_count)
-            })
+    log = []
 
-    # 4. Accuracy: Outlier detection using IQR method
-    df_txns['is_outlier'] = False
-    if 'amount' in df_txns.columns and len(df_txns) > 0:
-        Q1 = df_txns['amount'].quantile(0.25)
-        Q3 = df_txns['amount'].quantile(0.75)
-        IQR = Q3 - Q1
-        lower_bound = Q1 - 1.5 * IQR
-        upper_bound = Q3 + 1.5 * IQR
-        
-        outlier_mask = (df_txns['amount'] < lower_bound) | (df_txns['amount'] > upper_bound)
-        df_txns.loc[outlier_mask, 'is_outlier'] = True
-        
-        log_records.append({
-            "issue": "Statistical amount outliers detected (IQR method)",
-            "dimension": "Accuracy",
-            "column": "amount",
-            "rows_affected": int(outlier_mask.sum())
-        })
+    def note(step, rule, affected, df):
+        log.append({"step": step, "rule": rule, "rows_affected": int(affected), "rows_after": len(df)})
 
-    # 5. Validity: Format transaction dates to ISO format
-    if 'txn_date' in df_txns.columns:
-        df_txns['txn_date'] = pd.to_datetime(df_txns['txn_date'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
+    df = txns.copy()
+    note("0 Load", "Raw rows received", 0, df)
 
-    # 6. Consistency/Validity: Merge with agents data and track unknown agents
-    if 'agent_id' in df_txns.columns and 'agent_id' in df_agents.columns:
-        clean_df = pd.merge(df_txns, df_agents, on='agent_id', how='left', suffixes=('', '_agent'))
-        
-        unknown_mask = clean_df['county'].isna() if 'county' in clean_df.columns else pd.Series([False]*len(clean_df))
-        unknown_count = unknown_mask.sum()
-        
-        if 'county' in clean_df.columns:
-            clean_df['county'] = clean_df['county'].fillna('Unknown')
-            
-        log_records.append({
-            "issue": "Transactions linked to unknown or missing agents",
-            "dimension": "Consistency",
-            "column": "agent_id",
-            "rows_affected": int(unknown_count)
-        })
-    else:
-        clean_df = df_txns
+    # 1. Uniqueness
+    n_before = len(df)
+    df = df.drop_duplicates(subset="txn_id", keep="first").reset_index(drop=True)
+    note("1 Uniqueness", "Drop repeated txn_id (keep first)", n_before - len(df), df)
 
-    # Build final audit log DataFrame
-    log = pd.DataFrame(log_records)
-    
-    return clean_df, log
+    # 2. Consistency: txn_type
+    raw_type = df["txn_type"].astype("string")
+    df["txn_type"] = raw_type.str.strip().str.lower().map(VALID_TYPES)
+    bad = df["txn_type"].isna().sum()
+    note("2 Consistency", "Standardise txn_type to Deposit/Withdrawal "
+         f"(rows changed; {bad} unmappable left as NaN)",
+         (raw_type != df["txn_type"]).sum(), df)
+
+    # 3. Validity: types
+    raw_amt_missing = df["amount"].isna() | df["amount"].astype("string").str.strip().str.lower().isin(INVALID_STRINGS)
+    df["amount"] = _amount_numeric(df["amount"])
+    note("3a Validity", "Convert amount to numeric (text placeholders -> NaN)",
+         raw_amt_missing.sum(), df)
+    slash = df["txn_date"].astype("string").str.contains("/", na=False)
+    df["txn_date"] = _dates(df["txn_date"])
+    note("3b Validity", "Parse txn_date; '/' separators converted", slash.sum(), df)
+    df = df[df["txn_date"].notna()].reset_index(drop=True) if df["txn_date"].isna().any() else df
+
+    # 5. Outliers (computed on observed amounts only, before imputation)
+    lo, hi = _iqr_bounds(df["amount"].dropna())
+    df["is_outlier"] = (df["amount"] < lo) | (df["amount"] > hi)
+    df["is_outlier"] = df["is_outlier"].fillna(False)
+    note("5 Accuracy", f"Flag IQR outliers (bounds {lo:,.0f} to {hi:,.0f})", df["is_outlier"].sum(), df)
+
+    # 4. Completeness: median imputation by txn_type, excluding outliers
+    df["amount_imputed"] = df["amount"].isna()
+    med = df.loc[~df["is_outlier"]].groupby("txn_type")["amount"].median()
+    df["amount"] = df["amount"].fillna(df["txn_type"].map(med))
+    note("4 Completeness", "Impute missing/invalid amount with per-type median (flagged)",
+         df["amount_imputed"].sum(), df)
+
+    # 6. Merge
+    ag = agents.copy()
+    ag["agent_id"] = ag["agent_id"].str.strip()
+    ag = ag.drop_duplicates("agent_id")
+    n_before = len(df)
+    df = df.merge(ag[["agent_id", "county", "onboarded"]], on="agent_id", how="left", validate="m:1")
+    assert len(df) == n_before, "merge changed row count"
+    df["unknown_agent"] = df["county"].isna()
+    df["county"] = df["county"].fillna("Unknown")
+    note("6 Integrity", "Left-join agent register; unknown agents kept, county='Unknown'",
+         df["unknown_agent"].sum(), df)
+
+    df["amount"] = df["amount"].astype(float).round(2)
+    df["is_outlier"] = df["is_outlier"].astype(bool)
+    df["week_start"] = df["txn_date"] - pd.to_timedelta(df["txn_date"].dt.weekday, unit="D")
+    return df, pd.DataFrame(log)
