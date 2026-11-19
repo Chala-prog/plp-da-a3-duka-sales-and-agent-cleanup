@@ -29,9 +29,17 @@ python generate_data.py        # Duka (seed 2026) + agents (seed 44); writes duk
 python build_duka.py           # Engagement 1: rebuilds notebook, Excel workbook (with real PivotTable) and premium CSV from duka_sales.csv
 jupyter nbconvert --to notebook --execute --inplace agent_cleanup.ipynb   # Engagement 2 (imports cleaning_pipeline.py)
 ```
-Do not change the seeds. `build_duka.py` needs LibreOffice (`soffice`) only to create the PivotTable; `duka_sales_exploration.ipynb` can also be opened and run on its own in Jupyter.
+Do not change the seeds (Part A uses 2026, Part B uses 44). `build_duka.py` needs LibreOffice (`soffice`) only to create the PivotTable; `duka_sales_exploration.ipynb` can also be opened and run on its own in Jupyter.
 
-> **Note on Part A of `generate_data.py`:** it currently holds a clearly-marked stand-in Duka generator. Before submitting, paste the course Practicals generator (seed 2026) there unchanged and re-run `python build_duka.py`, then refresh the Executive Summary below.
+### Run each notebook
+1. `python generate_data.py` first, so the three CSV inputs exist.
+2. **Engagement 1:** open `duka_sales_exploration.ipynb` and choose *Restart & Run All* (it reads `duka_sales.csv` and `excel/*_recalc_check.csv`, and writes `outputs/premium_online_coast_capital.csv`).
+3. **Engagement 2:** open `agent_cleanup.ipynb` and choose *Restart & Run All* (it imports `cleaning_pipeline.py` and writes `outputs/agent_transactions_clean.csv`).
+
+### Assumptions
+- `price_band` (not defined by the data): Budget below KES 5,000, Mid KES 5,000 to 29,999, Premium KES 30,000 and above, so Premium means the Laptop.
+- The `Regions` sheet used by the XLOOKUP maps Nairobi to Central, Mombasa to Coast, Kisumu to Western, and Nakuru and Eldoret to Rift Valley.
+- Revenue = `quantity × unit_price`. The data runs from 1 Jan to 29 Jun 2026.
 
 ## Engagement 2 — before/after row count
 | Stage | Rows |
@@ -43,10 +51,8 @@ Do not change the seeds. `build_duka.py` needs LibreOffice (`soffice`) only to c
 Also: 20 amounts imputed (median by type, flagged `amount_imputed`), 40 IQR outliers flagged (`is_outlier`) including five identical KES 250,000 values held for verification.
 
 ## Duka Executive Summary
-- **Nairobi** is the top branch with KES 22,925,800 (32.4% of the KES 70,678,600 total revenue across 1,000 orders).
-- **Laptop** is the top product by revenue at KES 18,972,000, while **Headphones** leads on units with 608 sold.
-- Weekend orders are 27.9% of orders (279), averaging KES 65,970 per order vs KES 72,501 on weekdays.
-- **March** was the best month (KES 13,930,900) and **May** the worst (KES 9,832,700), a 41.7% gap.
-- 71 Premium online orders from Nairobi and Mombasa generated KES 8,784,000, i.e. 12.4% of revenue.
-
-> Numbers above come from the stand-in generator; paste the course generator into `generate_data.py` and re-run `python generate_data.py && python build_duka.py`.
+- **Nairobi** is the top branch with KES 26,106,100 (36.4% of the KES 71,792,500 total revenue across 1,000 orders).
+- **Laptop** is the top product by revenue at KES 41,535,000, while **Tablet** leads on units with 691 sold.
+- Weekend orders are 27.7% of orders (277), averaging KES 71,972 per order vs KES 71,724 on weekdays.
+- **April** was the best month (KES 13,518,300) and **June** the worst (KES 10,903,400), a 24.0% gap.
+- 33 Premium online orders from Nairobi and Mombasa generated KES 5,850,000, i.e. 8.1% of revenue.
