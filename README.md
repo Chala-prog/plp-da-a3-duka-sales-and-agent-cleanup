@@ -18,7 +18,7 @@ excel/*_recalc_check.csv          values read back from the workbook, used by Ta
 outputs/premium_online_coast_capital.csv     Premium + Online orders, Nairobi and Mombasa only
 cleaning_pipeline.py              clean_agent_data(txns, agents) -> (clean_df, log)
 agent_cleanup.ipynb               Engagement 2 notebook (audit, validation, summaries, Data Quality Report)
-outputs/agent_transactions_clean.csv         cleaned, merged agent transactions
+outputs/agent_transactions_clean.csv         cleaned, merged agent transactions (adds flags `amount_imputed`, `is_outlier`, `is_extreme_outlier`, `unknown_agent`)
 requirements.txt
 ```
 
@@ -48,11 +48,11 @@ Do not change the seeds (Part A uses 2026, Part B uses 44). `build_duka.py` need
 | After removing 12 duplicate `txn_id` | **600** |
 | After merge with agent register (left join) | **600** (7 on unknown agent AG099) |
 
-Also: 20 amounts imputed (median by type, flagged `amount_imputed`), 40 IQR outliers flagged (`is_outlier`) including five identical KES 250,000 values held for verification.
+Also: 20 amounts imputed (median by type, flagged `amount_imputed`); 40 IQR outliers flagged (`is_outlier`), of which the five identical KES 250,000 values are also flagged `is_extreme_outlier` (more than 100× the median) and excluded from headline figures until verified. The other 35 flagged rows are kept. Audit counts use the raw extract (612 rows); all other counts are after removing duplicates (600 rows).
 
 ## Duka Executive Summary
 - **Nairobi** is the top branch with KES 26,106,100 (36.4% of the KES 71,792,500 total revenue across 1,000 orders).
-- **Laptop** is the top product by revenue at KES 41,535,000, while **Tablet** leads on units with 691 sold.
+- **Laptop** is the top product by revenue at KES 41,535,000 (57.9% of revenue), while **Tablet** leads on units with 691 sold.
 - Weekend orders are 27.7% of orders (277), averaging KES 71,972 per order vs KES 71,724 on weekdays.
 - **April** was the best month (KES 13,518,300) and **June** the worst (KES 10,903,400), a 24.0% gap.
 - 33 Premium online orders from Nairobi and Mombasa generated KES 5,850,000, i.e. 8.1% of revenue.
