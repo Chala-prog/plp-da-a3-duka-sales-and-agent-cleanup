@@ -55,4 +55,4 @@ Also: 20 amounts imputed (median by type, flagged `amount_imputed`); 40 IQR outl
 - **Laptop** is the top product by revenue at KES 41,535,000 (57.9% of revenue), while **Tablet** leads on units with 691 sold.
 - Weekend orders are 27.7% of orders (277), averaging KES 71,972 per order vs KES 71,724 on weekdays.
 - **April** was the best month (KES 13,518,300) and **June** the worst (KES 10,903,400), a 24.0% gap.
-- 33 Premium online orders from Nairobi and Mombasa generated KES 5,850,000, i.e. 8.1% of revenue.
+- 33 Premium online orders from Nairobi and Mombasa generated KES 5,850,000, which is 8.1% of revenue.

@@ -147,7 +147,7 @@ md(f"""## Executive Summary
 - **{top_rev.index[0]}** is the top product by revenue at {K(top_rev.rev.iloc[0])} ({top_rev.rev.iloc[0]/total:.1%} of revenue), while **{top_u.index[0]}** leads on units with {top_u.units.iloc[0]:,} sold.
 - Weekend orders are {wk.orders[True]/len(df):.1%} of orders ({wk.orders[True]:,}), averaging {K(wk.aov[True])} per order vs {K(wk.aov[False])} on weekdays.
 - **{mo.name[best]}** was the best month ({K(mo.rev[best])}) and **{mo.name[worst]}** the worst ({K(mo.rev[worst])}), a {pct:.1f}% gap.
-- {len(sel):,} Premium online orders from Nairobi and Mombasa generated {K(sel.revenue.sum())}, i.e. {sel.revenue.sum()/total:.1%} of revenue.""")
+- {len(sel):,} Premium online orders from Nairobi and Mombasa generated {K(sel.revenue.sum())}, which is {sel.revenue.sum()/total:.1%} of revenue.""")
 md("## Task 1 · Load & first-five-minutes inspection")
 code('''import pandas as pd, numpy as np
 pd.options.display.float_format = "{:,.2f}".format
