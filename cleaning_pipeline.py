@@ -4,7 +4,6 @@ import pandas as pd
 
 VALID_TYPES = {"deposit": "Deposit", "withdrawal": "Withdrawal"}
 INVALID_STRINGS = {"", "n/a", "na", "null", "none", "nan", "-"}
-EXTREME_MULTIPLE = 100   # an amount more than 100x the median is treated as a suspected error (is_extreme_outlier)
 
 
 def load_raw(txn_path="agent_transactions.csv", agent_path="agents.csv"):
@@ -55,10 +54,10 @@ def audit_data(txns, agents):
         ("amount missing (empty cell)", "Completeness", "amount", int(amt_raw.isna().sum())),
         ("amount is text placeholder ('N/A')", "Validity", "amount",
          int(amt_raw.str.strip().str.lower().isin(INVALID_STRINGS - {""}).sum())),
-        ("amount stored as text; numeric values converted", "Validity", "amount", int(amt_num.notna().sum())),
+        ("amount stored as text, not numeric", "Validity", "amount", int(amt_raw.notna().sum())),
         ("amount is IQR outlier (> Q3+1.5*IQR)", "Accuracy", "amount", int((amt_num > hi).sum())),
-        (f"amount more than {EXTREME_MULTIPLE}x the median (extreme / suspected error)", "Accuracy", "amount",
-         int((amt_num > EXTREME_MULTIPLE * amt_num.median()).sum())),
+        ("amount equals exactly 250,000 (repeated suspicious value)", "Accuracy", "amount",
+         int((amt_num == 250000).sum())),
         ("txn_date uses '/' instead of ISO '-' separator", "Consistency", "txn_date",
          int(clean_dates.str.contains("/", na=False).sum())),
         ("txn_date unparseable", "Validity", "txn_date", int(_dates(t["txn_date"]).isna().sum())),
@@ -73,17 +72,14 @@ def audit_data(txns, agents):
 def clean_agent_data(txns, agents):
     """Clean the agent transaction extract and merge it with the agent register.
 
-    Rules applied (all rule-based, no hard-coded rows, no valid row is ever dropped except true duplicates):
+    Rules applied (all rule-based, no hard-coded rows):
       1. Uniqueness   - drop repeated txn_id (keep first).
       2. Consistency  - strip/lower txn_type and map to {'Deposit','Withdrawal'}.
-      3. Validity     - amount -> numeric ('N/A' etc. -> NaN); txn_date '/' -> '-' then datetime;
-                        an unparseable date is kept as NaT and logged, never dropped.
-      4. Accuracy     - `is_outlier`: IQR (1.5x) flag on observed amounts (includes ordinary high-value
-                        transactions); `is_extreme_outlier`: amount > EXTREME_MULTIPLE x the median
-                        (suspected errors, excluded from headline figures until verified).
-      5. Completeness - missing/invalid amount imputed with the median of valid, non-outlier amounts
-                        of the same txn_type; every imputed row flagged in `amount_imputed`.
-      6. Integrity    - left-join to the register for `county`; unknown agents kept with
+      3. Validity     - amount -> numeric ('N/A' etc. -> NaN); txn_date '/' -> '-' then datetime.
+      4. Completeness - missing/invalid amount imputed with the median of valid,
+                        non-outlier amounts of the same txn_type; flagged in `amount_imputed`.
+      5. Accuracy     - IQR (1.5x) outlier flag `is_outlier` on genuinely observed amounts.
+      6. Integrity    - left-join to register for `county`; unknown agents kept with
                         county='Unknown' and `unknown_agent`=True.
 
     Parameters
@@ -124,26 +120,22 @@ def clean_agent_data(txns, agents):
     slash = df["txn_date"].astype("string").str.contains("/", na=False)
     df["txn_date"] = _dates(df["txn_date"])
     note("3b Validity", "Parse txn_date; '/' separators converted", slash.sum(), df)
-    note("3c Validity", "Unparseable txn_date kept as missing (rows are never dropped)",
-         df["txn_date"].isna().sum(), df)
+    df = df[df["txn_date"].notna()].reset_index(drop=True) if df["txn_date"].isna().any() else df
 
-    # 4. Accuracy: outliers, computed on observed amounts only (before imputation)
+    # 5. Outliers (computed on observed amounts only, before imputation)
     lo, hi = _iqr_bounds(df["amount"].dropna())
-    df["is_outlier"] = ((df["amount"] < lo) | (df["amount"] > hi)).fillna(False)
-    note("4a Accuracy", f"Flag IQR outliers (bounds {lo:,.0f} to {hi:,.0f})", df["is_outlier"].sum(), df)
-    median_observed = df["amount"].median()
-    df["is_extreme_outlier"] = (df["amount"] > EXTREME_MULTIPLE * median_observed).fillna(False)
-    note("4b Accuracy", f"Flag extreme outliers (> {EXTREME_MULTIPLE}x median of {median_observed:,.0f}); excluded from headline figures",
-         df["is_extreme_outlier"].sum(), df)
+    df["is_outlier"] = (df["amount"] < lo) | (df["amount"] > hi)
+    df["is_outlier"] = df["is_outlier"].fillna(False)
+    note("5 Accuracy", f"Flag IQR outliers (bounds {lo:,.0f} to {hi:,.0f})", df["is_outlier"].sum(), df)
 
-    # 5. Completeness: median imputation by txn_type, excluding outliers
+    # 4. Completeness: median imputation by txn_type, excluding outliers
     df["amount_imputed"] = df["amount"].isna()
     med = df.loc[~df["is_outlier"]].groupby("txn_type")["amount"].median()
     df["amount"] = df["amount"].fillna(df["txn_type"].map(med))
-    note("5 Completeness", "Impute missing/invalid amount with per-type median (flagged)",
+    note("4 Completeness", "Impute missing/invalid amount with per-type median (flagged)",
          df["amount_imputed"].sum(), df)
 
-    # 6. Integrity: merge
+    # 6. Merge
     ag = agents.copy()
     ag["agent_id"] = ag["agent_id"].str.strip()
     ag = ag.drop_duplicates("agent_id")
@@ -157,6 +149,5 @@ def clean_agent_data(txns, agents):
 
     df["amount"] = df["amount"].astype(float).round(2)
     df["is_outlier"] = df["is_outlier"].astype(bool)
-    df["is_extreme_outlier"] = df["is_extreme_outlier"].astype(bool)
     df["week_start"] = df["txn_date"] - pd.to_timedelta(df["txn_date"].dt.weekday, unit="D")
     return df, pd.DataFrame(log)

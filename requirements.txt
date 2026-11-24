@@ -1,5 +1,7 @@
 pandas
 numpy
 openpyxl
-jupyter
 nbformat
+nbconvert
+ipykernel
+jupyter

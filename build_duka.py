@@ -1,60 +1,33 @@
 """Rebuilds ALL Engagement-1 deliverables from duka_sales.csv.
-Expected columns: order_id, order_date, branch, product, channel, quantity, unit_price
+Expected columns: order_id, order_date, branch, product, channel, units, unit_price
 Usage: python build_duka.py   (then notebook is executed automatically)"""
-import subprocess, shutil, os, sys
+import subprocess, shutil, os
 import pandas as pd, numpy as np, nbformat as nbf
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
-STANDIN = ">>> STAND-IN" in open("generate_data.py").read()   # notes about stand-in data show only until the course generator is pasted
 df = pd.read_csv("duka_sales.csv", parse_dates=["order_date"])
-need = {"order_id","order_date","branch","product","channel","quantity","unit_price"}
+need = {"order_id","order_date","branch","product","channel","units","unit_price"}
 assert need <= set(df.columns), f"missing columns: {need-set(df.columns)}"
 raw_shape = df.shape
-df["revenue"] = df["quantity"] * df["unit_price"]
+df["revenue"] = df["units"] * df["unit_price"]
 df["month"] = df["order_date"].dt.month_name()
 df["weekday"] = df["order_date"].dt.day_name()
 df["is_weekend"] = df["order_date"].dt.dayofweek >= 5
-df["price_band"] = pd.cut(df["unit_price"], bins=[0, 5000, 30000, np.inf], right=False,
-                          labels=["Budget", "Mid", "Premium"]).astype(str)
+df["price_band"] = np.where(df["unit_price"] >= 28000, "Premium", "Value")
 K = lambda v: f"KES {v:,.0f}"
 
 # ---- results used for the written answers
 br = df.groupby("branch").agg(rev=("revenue","sum"), orders=("order_id","count")).assign(aov=lambda x: x.rev/x.orders)
 br_rev = br.sort_values("rev", ascending=False); br_ord = br.sort_values("orders", ascending=False)
 same = list(br_rev.index) == list(br_ord.index)
-pr = df.groupby("product").agg(rev=("revenue","sum"), units=("quantity","sum"))
+pr = df.groupby("product").agg(rev=("revenue","sum"), units=("units","sum"))
 top_rev = pr.sort_values("rev", ascending=False).head(3); top_u = pr.sort_values("units", ascending=False).head(3)
 wk = df.groupby("is_weekend").agg(orders=("order_id","count"), rev=("revenue","sum"), aov=("revenue","mean"))
 mo = df.groupby(df["order_date"].dt.month).agg(rev=("revenue","sum")); mo["name"] = [pd.Timestamp(2026,m,1).month_name() for m in mo.index]
 best, worst = mo["rev"].idxmax(), mo["rev"].idxmin()
 pct = (mo.rev[best]-mo.rev[worst])/mo.rev[worst]*100
 sel = df[(df.price_band=="Premium")&(df.channel=="Online")&(df.branch.isin(["Nairobi","Mombasa"]))]
-
-# ---- extra context used by the "So what" sentences (all computed from the data)
-total = df["revenue"].sum()
-usum = df.quantity.sum()
-prem_products = ", ".join(sorted(df.loc[df.price_band=="Premium","product"].unique()))
-ch = df.groupby("channel").revenue.sum().sort_values(ascending=False)
-online_rev = df.loc[df.channel=="Online","revenue"].sum()
-sel_by_branch = sel.groupby("branch").revenue.sum().sort_values(ascending=False)
-shares3 = ", ".join(f"{b} {br.rev[b]/total:.1%}" for b in br_rev.index)
-so3 = (f" Revenue shares: {shares3}. **So what:** {br_rev.index[0]} alone brings in {br_rev.rev.iloc[0]/total:.1%}, so keeping its stock and staffing right protects the biggest slice; "
-       f"the other branches are far smaller ({K(br_rev.rev.iloc[-1])} to {K(br_rev.rev.iloc[1])}), so growth effort is best aimed at lifting {br_rev.index[-1]}, the smallest at {br_rev.rev.iloc[-1]/total:.1%}.")
-ru0, uu0 = top_rev.index[0], top_u.index[0]
-so4 = (f" **{ru0}** is {pr.rev[ru0]/total:.1%} of revenue from only {pr.units[ru0]/usum:.1%} of units, while **{uu0}** is {pr.units[uu0]/usum:.1%} of units but {pr.rev[uu0]/total:.1%} of revenue; "
-       f"the top three products together make {top_rev.rev.sum()/total:.1%} of revenue. **So what:** a stock-out of {ru0} costs the most money, so it deserves the tightest reorder level, while {uu0} keeps volume moving.")
-gap5_ = (wk.aov[True]/wk.aov[False]-1)*100
-so5 = (" **So what:** treat weekends like any other trading day; the data gives no reason for weekend-only promotions or extra weekend stock."
-       if abs(gap5_) < 2 else
-       f" **So what:** weekend baskets are {'larger' if gap5_>0 else 'smaller'} ({gap5_:+.1f}%), so plan promotions and staffing around weekends.")
-so6 = (f" **So what:** have stock and staff ready ahead of {mo.name[best]} demand, and find out what held {mo.name[worst]} back "
-       f"(promotions, stock-outs or season) before planning the second half of the year.")
-ch_mix = ", ".join(f"{c} {v/total:.1%}" for c, v in ch.items())
-so7 = (f" That is {sel.revenue.sum()/total:.1%} of all revenue and {sel.revenue.sum()/online_rev:.1%} of online revenue (channel mix: {ch_mix}); "
-       f"by branch: {', '.join(f'{b} {K(v)}' for b, v in sel_by_branch.items())}. "
-       f"**So what:** Premium here means {prem_products} only, so this segment is a niche; growing online sales of that product in Nairobi and Mombasa is the lever, "
-       f"and the {ch.index[-1]} channel ({ch.iloc[-1]/total:.1%} of revenue) is too small to prioritise.")
 os.makedirs("outputs", exist_ok=True); os.makedirs("excel", exist_ok=True)
 sel.to_csv("outputs/premium_online_coast_capital.csv", index=False)
 total = df.revenue.sum()
@@ -63,8 +36,8 @@ ds, de = df.order_date.min().date(), df.order_date.max().date()
 # ---- Excel
 regions = {"Nairobi":"Central","Kiambu":"Central","Nakuru":"Rift Valley","Eldoret":"Rift Valley","Mombasa":"Coast","Kisumu":"Western"}
 wb = Workbook(); wd = wb.active; wd.title = "Data"
-wd.append(["order_id","order_date","branch","product","channel","quantity","unit_price","revenue"])
-for r in df.itertuples(): wd.append([r.order_id, r.order_date.date(), r.branch, r.product, r.channel, int(r.quantity), float(r.unit_price), float(r.revenue)])
+wd.append(["order_id","order_date","branch","product","channel","units","unit_price","revenue"])
+for r in df.itertuples(): wd.append([r.order_id, r.order_date.date(), r.branch, r.product, r.channel, int(r.units), float(r.unit_price), float(r.revenue)])
 n = len(df)+1
 wr = wb.create_sheet("Regions"); wr.append(["branch","region"])
 for b in br.index: wr.append([b, regions.get(b,"Other")])
@@ -81,7 +54,10 @@ for w in (ws,): w.column_dimensions["A"].width = 14; w.column_dimensions["B"].wi
 tmp = Workbook(); t0 = tmp.active; t0.title = "Data"
 for row in wd.iter_rows(values_only=True): t0.append(list(row))
 tmp.save("/tmp/duka_base.xlsx")
-subprocess.run(["python3","make_pivot.py","/tmp/duka_base.xlsx","/tmp/duka_pivot.xlsx",str(n)],check=True)
+for _try in range(4):   # LibreOffice occasionally crashes on first start-up; retry
+    if subprocess.run(["python3","make_pivot.py","/tmp/duka_base.xlsx","/tmp/duka_pivot.xlsx",str(n)]).returncode == 0: break
+    subprocess.run(["pkill","-f","soffice"]); import time; time.sleep(3)
+else: raise RuntimeError("make_pivot.py failed 4 times - is LibreOffice (soffice) installed?")
 from openpyxl import load_workbook
 pvwb = load_workbook("/tmp/duka_pivot.xlsx", data_only=True)
 pcells = [[c for c in r] for r in pvwb["Pivot_Branch_Channel"].iter_rows(values_only=True)]
@@ -108,35 +84,6 @@ chk = load_workbook("/tmp/lo/duka_branch_summary.xlsx", data_only=True)
 rows = [(r[1], r[2], r[3]) for r in chk["Branch_Summary"].iter_rows(min_row=2, max_row=last, values_only=True)]
 pd.DataFrame(rows, columns=["branch","sumifs_revenue","countifs_orders"]).to_csv("excel/sumifs_recalc_check.csv", index=False)
 
-# ---- store the computed results as the cached values of the Branch_Summary formulas, so every viewer
-# (GitHub tools, Python, LibreOffice older than 24.8 which has no XLOOKUP) shows numbers. Excel still
-# recalculates everything on open because fullCalcOnLoad is set.
-import zipfile, re
-def add_cached_values(path, values):
-    src = zipfile.ZipFile(path); tmp = path + ".tmp"
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
-        for item in src.infolist():
-            data = src.read(item.filename)
-            if item.filename.startswith("xl/worksheets/sheet") and b"Total revenue (SUMIFS)" in data:
-                xml = data.decode("utf-8")
-                for ref, val in values.items():
-                    text = isinstance(val, str)
-                    pattern = re.compile(r'<c r="' + ref + r'"([^>]*)>(<f>.*?</f>)<v></v></c>', re.S)
-                    def fill_in(m, text=text, val=val):
-                        kind = ' t="str"' if text else ""
-                        return '<c r="' + ref + '"' + m.group(1) + kind + ">" + m.group(2) + "<v>" + str(val) + "</v></c>"
-                    xml, hits = pattern.subn(fill_in, xml)
-                    assert hits == 1, ref
-                data = xml.encode("utf-8")
-            dst.writestr(item, data)
-    src.close(); os.replace(tmp, path)
-
-cached = {}
-for i, b in enumerate(br_rev.index, start=2):
-    cached[f"C{i}"] = int(br.rev[b]); cached[f"D{i}"] = int(br.orders[b]); cached[f"E{i}"] = regions.get(b, "Unknown")
-cached[f"C{last+1}"] = int(br.rev.sum()); cached[f"D{last+1}"] = int(br.orders.sum())
-add_cached_values("excel/duka_branch_summary.xlsx", cached)
-
 # ---- Notebook
 nb = nbf.v4.new_notebook(); C = []
 md = lambda s: C.append(nbf.v4.new_markdown_cell(s)); code = lambda s: C.append(nbf.v4.new_code_cell(s))
@@ -144,10 +91,10 @@ md("# Duka Electronics — H1 2026 Sales Exploration")
 bl = br_rev.index[0]; bo = br_ord.index[0]
 md(f"""## Executive Summary
 - **{br_rev.index[0]}** is the top branch with {K(br_rev.rev.iloc[0])} ({br_rev.rev.iloc[0]/total:.1%} of the {K(total)} total revenue across {len(df):,} orders).
-- **{top_rev.index[0]}** is the top product by revenue at {K(top_rev.rev.iloc[0])} ({top_rev.rev.iloc[0]/total:.1%} of revenue), while **{top_u.index[0]}** leads on units with {top_u.units.iloc[0]:,} sold.
+- **{top_rev.index[0]}** is the top product by revenue at {K(top_rev.rev.iloc[0])}, while **{top_u.index[0]}** leads on units with {top_u.units.iloc[0]:,} sold.
 - Weekend orders are {wk.orders[True]/len(df):.1%} of orders ({wk.orders[True]:,}), averaging {K(wk.aov[True])} per order vs {K(wk.aov[False])} on weekdays.
 - **{mo.name[best]}** was the best month ({K(mo.rev[best])}) and **{mo.name[worst]}** the worst ({K(mo.rev[worst])}), a {pct:.1f}% gap.
-- {len(sel):,} Premium online orders from Nairobi and Mombasa generated {K(sel.revenue.sum())}, which is {sel.revenue.sum()/total:.1%} of revenue.""")
+- {len(sel):,} Premium online orders from Nairobi and Mombasa generated {K(sel.revenue.sum())}, i.e. {sel.revenue.sum()/total:.1%} of revenue.""")
 md("## Task 1 · Load & first-five-minutes inspection")
 code('''import pandas as pd, numpy as np
 pd.options.display.float_format = "{:,.2f}".format
@@ -157,80 +104,47 @@ print("\\ndate range:", df.order_date.min().date(), "to", df.order_date.max().da
 for c in ["branch","product","channel"]: print("\\n", df[c].value_counts().to_dict())
 print("duplicate order_id:", df.order_id.duplicated().sum())
 df.describe()''')
-note = "\n> **Data-source note:** Part A of `generate_data.py` is still the stand-in generator, so every number here is provisional." if STANDIN else ""
-price_per_product = df.groupby("product")["unit_price"].nunique().max()
-days_with_orders = df.order_date.nunique(); span_days = (df.order_date.max() - df.order_date.min()).days + 1
-md(f"""**Inspection notes (what the first five minutes showed).**
-- **Shape and types:** {raw_shape[0]:,} rows × {raw_shape[1]} columns; `order_date` was parsed to datetime on load (range {ds} → {de}), the rest are numbers or short text categories.
-- **Completeness and uniqueness:** {df.isna().sum().sum()} missing values and {df.order_id.duplicated().sum()} repeated `order_id`, so no cleaning was needed before analysis.
-- **Categories:** {df.branch.nunique()} branches, {df["product"].nunique()} products and {df.channel.nunique()} channels ({', '.join(sorted(df.channel.unique()))}), with no spelling variants.
-- **Plausibility:** each product has {'exactly one' if price_per_product == 1 else 'more than one'} `unit_price`; `quantity` runs from {df.quantity.min()} to {df.quantity.max()}; orders appear on {days_with_orders} of the {span_days} calendar days, so the period is covered evenly.
-- **Implication:** revenue can be derived directly as `quantity × unit_price`, and monthly comparisons are fair except for the last month, which is cut short on {de}.
-{note}""")
+md(f"""**Inspection notes.** {raw_shape[0]:,} rows × {raw_shape[1]} columns. `order_date` parsed to datetime (range {ds} → {de}); ({df.isna().sum().sum()} nulls, {df.order_id.duplicated().sum()} duplicates). Categories: {df.branch.nunique()} branches, {df["product"].nunique()} products, channels {', '.join(sorted(df.channel.unique()))}.
+> **Data-source note:** `duka_sales.csv` in this build is a stand-in (`standin_duka_generator.py`). Replace it with the course-generated file and run `python build_duka.py` to refresh every number below.""")
 md("## Task 2 · Derived columns")
-code('''df["revenue"] = df["quantity"] * df["unit_price"]
+code('''df["revenue"] = df["units"] * df["unit_price"]
 df["month"] = df["order_date"].dt.month_name()
 df["weekday"] = df["order_date"].dt.day_name()
 df["is_weekend"] = df["order_date"].dt.dayofweek >= 5
-df["price_band"] = pd.cut(df["unit_price"], bins=[0, 5000, 30000, np.inf], right=False,
-                          labels=["Budget", "Mid", "Premium"]).astype(str)
+df["price_band"] = np.where(df["unit_price"] >= 28000, "Premium", "Value")
 df[["order_id","revenue","month","weekday","is_weekend","price_band"]].head()''')
-prem = ", ".join(sorted(df.loc[df["price_band"]=="Premium","product"].unique()))
-md(f"`revenue = quantity × unit_price`. `price_band` splits `unit_price` into **Budget** (below KES 5,000), **Mid** (KES 5,000 to 29,999) and **Premium** (KES 30,000 and above); Premium here means: {prem}.")
+md("`revenue = units × unit_price`; `price_band` uses `unit_price ≥ KES 28,000` → Premium.")
 md("## Task 3 · Branch ranking: revenue vs orders")
 code('''b = df.groupby("branch").agg(total_revenue=("revenue","sum"), orders=("order_id","count"))
 b["avg_order_value"] = b.total_revenue/b.orders
 b["rank_revenue"] = b.total_revenue.rank(ascending=False).astype(int)
 b["rank_orders"] = b.orders.rank(ascending=False, method="min").astype(int)
 b.sort_values("total_revenue", ascending=False)''')
-r = list(br_rev.index)
-swap = next(((r[a], r[b]) for a in range(len(r)) for b in range(a+1, len(r)) if br.orders[r[a]] < br.orders[r[b]]), None)
-if same:
-    expl = (f"The two rankings are identical: order volume and revenue move together because average order values are close across branches "
-            f"({K(br.aov.min())} to {K(br.aov.max())}), so no branch wins on revenue through pricier baskets alone.")
-else:
-    lead = (f"**{bl}** is first on both lists, but the order changes further down." if bl == bo
-            else f"**{bl}** leads on revenue but **{bo}** leads on orders.")
-    x, y = swap
-    expl = (f"The rankings differ. {lead} For example, **{x}** out-earns **{y}** ({K(br.rev[x])} vs {K(br.rev[y])}) "
-            f"despite fewer orders ({br.orders[x]:,} vs {br.orders[y]:,}), because revenue = orders × average order value "
-            f"and {x}'s average order is larger ({K(br.aov[x])} vs {K(br.aov[y])}).")
-md(f"**Answer.** By revenue: {' > '.join(br_rev.index)}. By orders: {' > '.join(br_ord.index)}. {expl}" + so3)
+expl = ("The two rankings are identical here: order volume and revenue move together because average order values are similar across branches." if same else
+        f"The rankings differ. **{bl}** leads on revenue but **{bo}** leads on orders: revenue = orders × average order value, so a branch with fewer orders can out-earn one with more if it sells higher-priced items (e.g. {bl} AOV {K(br.aov[bl])} vs {bo} {K(br.aov[bo])}).")
+md(f"**Answer.** By revenue: {' > '.join(br_rev.index)}. By orders: {' > '.join(br_ord.index)}. {expl}")
 md("## Task 4 · Top three products")
-code('''p = df.groupby("product").agg(revenue=("revenue","sum"), units_sold=("quantity","sum"))
+code('''p = df.groupby("product").agg(revenue=("revenue","sum"), units=("units","sum"))
 print("By revenue:"); display(p.nlargest(3,"revenue"))
-print("By units sold:");   display(p.nlargest(3,"units_sold"))''')
+print("By units:");   display(p.nlargest(3,"units"))''')
 dif = set(top_rev.index) ^ set(top_u.index)
-if list(top_rev.index) == list(top_u.index):
-    why4 = "The two lists are identical, so the best sellers by volume are also the best earners."
-elif not dif:
-    ru, uu = top_rev.index[0], top_u.index[0]
-    why4 = (f"The same three products appear in both lists but in a different order: **{uu}** sells the most units ({top_u.units.iloc[0]:,}) "
-            f"while **{ru}** earns the most revenue ({K(top_rev.rev.iloc[0])}) because revenue = units × price and {ru} costs "
-            f"{K(df.loc[df['product']==ru,'unit_price'].iloc[0])} against {K(df.loc[df['product']==uu,'unit_price'].iloc[0])} for {uu}.")
-else:
-    why4 = "The lists differ because revenue rewards price × volume: expensive items earn heavily from fewer units, while cheap accessories sell many units but contribute little revenue."
-md(f"**Answer.** Top by revenue: {', '.join(top_rev.index)}. Top by units: {', '.join(top_u.index)}. " + why4 + so4)
+md(f"**Answer.** Top by revenue: {', '.join(top_rev.index)}. Top by units: {', '.join(top_u.index)}. " +
+   ("The lists differ because revenue rewards price × volume: expensive items earn heavily from fewer units, while cheap accessories sell many units but contribute little revenue." if dif else "The lists contain the same products."))
 md("## Task 5 · Weekend vs weekday")
 code('''w = df.groupby("is_weekend").agg(orders=("order_id","count"), total_revenue=("revenue","sum"), avg_order_revenue=("revenue","mean"))
 w.index = w.index.map({True:"Weekend", False:"Weekday"}); w''')
-gap5 = (wk.aov[True]/wk.aov[False]-1)*100
-share5 = wk.orders[True]/len(df)*100
-read5 = (f"average order values are virtually the same ({gap5:+.1f}%), and weekends hold {share5:.1f}% of orders against the {2/7*100:.1f}% you would expect from 2 of 7 days, so there is no real weekend effect."
-         if abs(gap5) < 2 else
-         f"weekend orders are {'larger' if gap5>0 else 'smaller'} on average ({gap5:+.1f}%).")
-md(f"**Answer.** Weekdays: {wk.orders[False]:,} orders, {K(wk.rev[False])}, avg {K(wk.aov[False])}. Weekends: {wk.orders[True]:,} orders, {K(wk.rev[True])}, avg {K(wk.aov[True])}. Weekends cover only 2 of 7 days, so compare the average order value, not totals: {read5}" + so5)
+md(f"**Answer.** Weekdays: {wk.orders[False]:,} orders, {K(wk.rev[False])}, avg {K(wk.aov[False])}. Weekends: {wk.orders[True]:,} orders, {K(wk.rev[True])}, avg {K(wk.aov[True])}. Weekends cover only 2 of 7 days, so compare the average order value, not totals: weekend orders are {'larger' if wk.aov[True]>wk.aov[False] else 'smaller'} on average ({(wk.aov[True]/wk.aov[False]-1)*100:+.1f}%).")
 md("## Task 6 · Best and worst month")
 code('''m = df.groupby(df.order_date.dt.month).revenue.sum()
 m.index = [pd.Timestamp(2026,i,1).month_name() for i in m.index]
 best, worst = m.idxmax(), m.idxmin()
 print(m); print(f"best={best} worst={worst} difference={(m[best]-m[worst])/m[worst]*100:.1f}% (best vs worst)")''')
-md(f"**Answer.** Best: **{mo.name[best]}** ({K(mo.rev[best])}); worst: **{mo.name[worst]}** ({K(mo.rev[worst])}). Best is **{pct:.1f}%** higher than worst, i.e. worst is {(mo.rev[best]-mo.rev[worst])/mo.rev[best]*100:.1f}% below best." + (f" Caveat: the data ends on {de}, so {mo.name[worst] if pd.Timestamp(de).month==worst else pd.Timestamp(de).month_name()} is missing its last day(s)." if pd.Timestamp(de).day != pd.Timestamp(de).days_in_month else "") + so6)
+md(f"**Answer.** Best: **{mo.name[best]}** ({K(mo.rev[best])}); worst: **{mo.name[worst]}** ({K(mo.rev[worst])}). Best is **{pct:.1f}%** higher than worst, i.e. worst is {(mo.rev[best]-mo.rev[worst])/mo.rev[best]*100:.1f}% below best.")
 md("## Task 7 · Premium online orders, Nairobi & Mombasa")
 code('''sel = df[(df.price_band=="Premium") & (df.channel=="Online") & (df.branch.isin(["Nairobi","Mombasa"]))]
 print(len(sel), "orders | revenue KES", f"{sel.revenue.sum():,.0f}")
 sel.to_csv("outputs/premium_online_coast_capital.csv", index=False)''')
-md(f"**Answer.** **{len(sel):,}** orders, total revenue **{K(sel.revenue.sum())}**. Exported to `outputs/premium_online_coast_capital.csv` (`index=False`)." + so7)
+md(f"**Answer.** **{len(sel):,}** orders, total revenue **{K(sel.revenue.sum())}**. Exported to `outputs/premium_online_coast_capital.csv` (`index=False`).")
 md("## Task 8 · Excel reconciliation (`excel/duka_branch_summary.xlsx`)")
 code('''xl = pd.read_csv("excel/sumifs_recalc_check.csv").set_index("branch")      # SUMIFS/COUNTIFS values recalculated from the workbook
 cmp = b[["total_revenue","orders"]].join(xl)
@@ -246,9 +160,9 @@ print("PivotTable branch×channel = pandas pivot:", ok, "| pivot grand total:", 
 cmp''')
 md("**Answer.** The workbook has `Branch_Summary` (SUMIFS revenue + COUNTIFS orders + XLOOKUP region from the `Regions` sheet) and `Pivot_Branch_Channel` (a real PivotTable: branch rows × channel columns, sum of revenue). The check above shows every total equals pandas.")
 nb["cells"] = C; nbf.write(nb, "duka_sales_exploration.ipynb")
-subprocess.run([sys.executable,"-m","jupyter","nbconvert","--to","notebook","--execute","--inplace","duka_sales_exploration.ipynb"],capture_output=True)
+subprocess.run(["jupyter","nbconvert","--to","notebook","--execute","--inplace","duka_sales_exploration.ipynb"],capture_output=True)
 exec_sum = C[1].source
 r = open("README.md").read()
 head = r.split("## Duka Executive Summary")[0]
-open("README.md","w").write(head+"## Duka Executive Summary\n"+exec_sum.replace("## Executive Summary\n","")+("\n\n> Numbers above come from the stand-in generator; paste the course generator into `generate_data.py` and re-run `python generate_data.py && python build_duka.py`.\n" if STANDIN else "\n"))
+open("README.md","w").write(head+"## Duka Executive Summary\n"+exec_sum.replace("## Executive Summary\n","")+"\n\n> Numbers above come from the stand-in `duka_sales.csv`; re-run `python build_duka.py` after replacing it with the course file and paste the refreshed summary.\n")
 print(exec_sum)

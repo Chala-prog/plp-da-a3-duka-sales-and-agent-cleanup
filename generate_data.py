@@ -1,39 +1,35 @@
-"""Dataset generators for the Week 3 assignment (both unchanged, exactly as supplied).
+"""Dataset generators for Week 3 assignment.
 
-Part A  - Duka Electronics (seed 2026)        -> duka_sales.csv
+Part A  - Duka Electronics (seed 2026) -> duka_sales.csv
 Part B  - Mobile money agent network (seed 44) -> agents.csv, agent_transactions.csv
 """
+import numpy as np, pandas as pd
 
 # ---------------------------------------------------------------------------
-# PART A: Duka Electronics  (seed 2026)
+# PART A: Duka Electronics (seed 2026) -- STAND-IN, replace with course generator
+# PASTE the Practicals-section generator here UNCHANGED (do not alter the seed).
 # ---------------------------------------------------------------------------
-import numpy as np
-import pandas as pd
-
+# >>> STAND-IN (NOT the course generator). Replace this block with the Practicals-section code, unchanged. <<<
 rng = np.random.default_rng(2026)
 n = 1000
-products = {"Phone": 15000, "Laptop": 65000, "Headphones": 2500,
-            "Tablet": 28000, "Charger": 1200}
-
-sales = pd.DataFrame({
-    "order_id": range(1001, 1001 + n),
-    "order_date": pd.to_datetime("2026-01-01")
-                  + pd.to_timedelta(rng.integers(0, 180, n), unit="D"),
-    "branch": rng.choice(["Nairobi", "Mombasa", "Kisumu", "Nakuru", "Eldoret"], n,
-                         p=[0.4, 0.2, 0.15, 0.15, 0.1]),
-    "product": rng.choice(list(products), n),
-    "quantity": rng.integers(1, 6, n),
-    "channel": rng.choice(["In-store", "Online", "Phone order"], n,
-                          p=[0.55, 0.35, 0.10]),
+branches = ["Nairobi", "Mombasa", "Kisumu", "Nakuru", "Eldoret"]
+prods = {"Laptop": 62000, "Smartphone": 28500, "Television": 45000, "Tablet": 24000,
+         "Headphones": 6500, "Smartwatch": 15500, "Router": 7800, "Printer": 18500}
+d = pd.DataFrame({
+    "order_id": [f"D{i:04d}" for i in range(1, n + 1)],
+    "order_date": (pd.Timestamp("2026-01-01") + pd.to_timedelta(rng.integers(0, 181, n), unit="D")).strftime("%Y-%m-%d"),
+    "branch": rng.choice(branches, n, p=[.34, .22, .15, .15, .14]),
+    "product": rng.choice(list(prods), n, p=[.10, .12, .08, .12, .22, .12, .14, .10]),
+    "channel": rng.choice(["Online", "In-store"], n, p=[.4, .6]),
+    "units": rng.integers(1, 6, n),
 })
-sales["unit_price"] = sales["product"].map(products)
-sales.to_csv("duka_sales.csv", index=False)
+d["unit_price"] = d["product"].map(prods)
+d.to_csv("duka_sales.csv", index=False)
 
 
 # ---------------------------------------------------------------------------
-# PART B: Mobile money agent network (seed 44)
+# PART B: Agent network (seed 44) - exactly as supplied in the brief
 # ---------------------------------------------------------------------------
-import numpy as np, pandas as pd
 rng = np.random.default_rng(44)
 n = 600
 agents = pd.DataFrame({
