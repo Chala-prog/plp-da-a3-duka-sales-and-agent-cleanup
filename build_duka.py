@@ -1,5 +1,5 @@
 """Rebuilds ALL Engagement-1 deliverables from duka_sales.csv.
-Expected columns: order_id, order_date, branch, product, channel, units, unit_price
+Expected columns: order_id, order_date, branch, product, channel, quantity, unit_price
 Usage: python build_duka.py   (then notebook is executed automatically)"""
 import subprocess, shutil, os
 import pandas as pd, numpy as np, nbformat as nbf
@@ -7,10 +7,10 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
 df = pd.read_csv("duka_sales.csv", parse_dates=["order_date"])
-need = {"order_id","order_date","branch","product","channel","units","unit_price"}
+need = {"order_id","order_date","branch","product","channel","quantity","unit_price"}
 assert need <= set(df.columns), f"missing columns: {need-set(df.columns)}"
 raw_shape = df.shape
-df["revenue"] = df["units"] * df["unit_price"]
+df["revenue"] = df["quantity"] * df["unit_price"]
 df["month"] = df["order_date"].dt.month_name()
 df["weekday"] = df["order_date"].dt.day_name()
 df["is_weekend"] = df["order_date"].dt.dayofweek >= 5
@@ -21,7 +21,7 @@ K = lambda v: f"KES {v:,.0f}"
 br = df.groupby("branch").agg(rev=("revenue","sum"), orders=("order_id","count")).assign(aov=lambda x: x.rev/x.orders)
 br_rev = br.sort_values("rev", ascending=False); br_ord = br.sort_values("orders", ascending=False)
 same = list(br_rev.index) == list(br_ord.index)
-pr = df.groupby("product").agg(rev=("revenue","sum"), units=("units","sum"))
+pr = df.groupby("product").agg(rev=("revenue","sum"), units=("quantity","sum"))
 top_rev = pr.sort_values("rev", ascending=False).head(3); top_u = pr.sort_values("units", ascending=False).head(3)
 wk = df.groupby("is_weekend").agg(orders=("order_id","count"), rev=("revenue","sum"), aov=("revenue","mean"))
 mo = df.groupby(df["order_date"].dt.month).agg(rev=("revenue","sum")); mo["name"] = [pd.Timestamp(2026,m,1).month_name() for m in mo.index]
@@ -36,8 +36,8 @@ ds, de = df.order_date.min().date(), df.order_date.max().date()
 # ---- Excel
 regions = {"Nairobi":"Central","Kiambu":"Central","Nakuru":"Rift Valley","Eldoret":"Rift Valley","Mombasa":"Coast","Kisumu":"Western"}
 wb = Workbook(); wd = wb.active; wd.title = "Data"
-wd.append(["order_id","order_date","branch","product","channel","units","unit_price","revenue"])
-for r in df.itertuples(): wd.append([r.order_id, r.order_date.date(), r.branch, r.product, r.channel, int(r.units), float(r.unit_price), float(r.revenue)])
+wd.append(["order_id","order_date","branch","product","channel","quantity","unit_price","revenue"])
+for r in df.itertuples(): wd.append([r.order_id, r.order_date.date(), r.branch, r.product, r.channel, int(r.quantity), float(r.unit_price), float(r.revenue)])
 n = len(df)+1
 wr = wb.create_sheet("Regions"); wr.append(["branch","region"])
 for b in br.index: wr.append([b, regions.get(b,"Other")])
@@ -104,32 +104,40 @@ print("\\ndate range:", df.order_date.min().date(), "to", df.order_date.max().da
 for c in ["branch","product","channel"]: print("\\n", df[c].value_counts().to_dict())
 print("duplicate order_id:", df.order_id.duplicated().sum())
 df.describe()''')
-md(f"""**Inspection notes.** {raw_shape[0]:,} rows × {raw_shape[1]} columns. `order_date` parsed to datetime (range {ds} → {de}); ({df.isna().sum().sum()} nulls, {df.order_id.duplicated().sum()} duplicates). Categories: {df.branch.nunique()} branches, {df["product"].nunique()} products, channels {', '.join(sorted(df.channel.unique()))}.
-> **Data-source note:** `duka_sales.csv` in this build is a stand-in (`standin_duka_generator.py`). Replace it with the course-generated file and run `python build_duka.py` to refresh every number below.""")
+md(f"""**Inspection notes.** {raw_shape[0]:,} rows × {raw_shape[1]} columns. `order_date` parsed to datetime (range {ds} → {de}); ({df.isna().sum().sum()} nulls, {df.order_id.duplicated().sum()} duplicates). Categories: {df.branch.nunique()} branches, {df["product"].nunique()} products, channels {', '.join(sorted(df.channel.unique()))}.""")
 md("## Task 2 · Derived columns")
-code('''df["revenue"] = df["units"] * df["unit_price"]
+code('''df["revenue"] = df["quantity"] * df["unit_price"]
 df["month"] = df["order_date"].dt.month_name()
 df["weekday"] = df["order_date"].dt.day_name()
 df["is_weekend"] = df["order_date"].dt.dayofweek >= 5
 df["price_band"] = np.where(df["unit_price"] >= 28000, "Premium", "Value")
 df[["order_id","revenue","month","weekday","is_weekend","price_band"]].head()''')
-md("`revenue = units × unit_price`; `price_band` uses `unit_price ≥ KES 28,000` → Premium.")
+md("`revenue = quantity × unit_price`; `price_band` uses `unit_price ≥ KES 28,000` → Premium (so Tablet at exactly KES 28,000 is Premium; Laptop is Premium; Phone, Headphones and Charger are Value).")
 md("## Task 3 · Branch ranking: revenue vs orders")
 code('''b = df.groupby("branch").agg(total_revenue=("revenue","sum"), orders=("order_id","count"))
 b["avg_order_value"] = b.total_revenue/b.orders
 b["rank_revenue"] = b.total_revenue.rank(ascending=False).astype(int)
 b["rank_orders"] = b.orders.rank(ascending=False, method="min").astype(int)
 b.sort_values("total_revenue", ascending=False)''')
-expl = ("The two rankings are identical here: order volume and revenue move together because average order values are similar across branches." if same else
+expl = (f"The two rankings are identical: revenue = orders × average order value, and every branch sells the same product mix at similar prices, so AOV is almost flat (KES {br.aov.min():,.0f} to KES {br.aov.max():,.0f}) and order volume alone decides the order. "
+        f"The gaps in share are small, e.g. {bl} has {br.orders[bl]/len(df):.1%} of orders but {br.rev[bl]/total:.1%} of revenue." if same else
         f"The rankings differ. **{bl}** leads on revenue but **{bo}** leads on orders: revenue = orders × average order value, so a branch with fewer orders can out-earn one with more if it sells higher-priced items (e.g. {bl} AOV {K(br.aov[bl])} vs {bo} {K(br.aov[bo])}).")
 md(f"**Answer.** By revenue: {' > '.join(br_rev.index)}. By orders: {' > '.join(br_ord.index)}. {expl}")
 md("## Task 4 · Top three products")
-code('''p = df.groupby("product").agg(revenue=("revenue","sum"), units=("units","sum"))
+code('''p = df.groupby("product").agg(revenue=("revenue","sum"), units=("quantity","sum"))
 print("By revenue:"); display(p.nlargest(3,"revenue"))
 print("By units:");   display(p.nlargest(3,"units"))''')
 dif = set(top_rev.index) ^ set(top_u.index)
-md(f"**Answer.** Top by revenue: {', '.join(top_rev.index)}. Top by units: {', '.join(top_u.index)}. " +
-   ("The lists differ because revenue rewards price × volume: expensive items earn heavily from fewer units, while cheap accessories sell many units but contribute little revenue." if dif else "The lists contain the same products."))
+price = df.groupby("product").unit_price.first()
+only_r = [p for p in top_rev.index if p not in top_u.index]; only_u = [p for p in top_u.index if p not in top_rev.index]
+if only_r:
+    why = (f"The lists differ because revenue = price × quantity. {', '.join(only_r)} (unit price {', '.join(K(price[p]) for p in only_r)}) makes the revenue top three despite fewer units, "
+           f"while {', '.join(only_u)} (unit price {', '.join(K(price[p]) for p in only_u)}) sells more units but earns less per unit.")
+else:
+    r1, u1 = top_rev.index[0], top_u.index[0]
+    why = (f"The two lists contain the same three products but in a different order. {r1} ranks first on revenue (unit price {K(price[r1])}, {pr.units[r1]:,} units) while {u1} ranks first on units ({pr.units[u1]:,}) at only {K(price[u1])} each, "
+           f"so {r1} earns {pr.rev[r1]/pr.rev[u1]:.1f}× the revenue of {u1} from {'fewer' if pr.units[r1] < pr.units[u1] else 'similar'} units. Revenue reflects price × quantity; unit counts are almost level across products because each is picked with equal probability.")
+md(f"**Answer.** Top by revenue: {', '.join(f'{p} ({K(top_rev.rev[p])})' for p in top_rev.index)}. Top by units: {', '.join(f'{p} ({top_u.units[p]:,})' for p in top_u.index)}. " + why)
 md("## Task 5 · Weekend vs weekday")
 code('''w = df.groupby("is_weekend").agg(orders=("order_id","count"), total_revenue=("revenue","sum"), avg_order_revenue=("revenue","mean"))
 w.index = w.index.map({True:"Weekend", False:"Weekday"}); w''')
@@ -164,5 +172,5 @@ subprocess.run(["jupyter","nbconvert","--to","notebook","--execute","--inplace",
 exec_sum = C[1].source
 r = open("README.md").read()
 head = r.split("## Duka Executive Summary")[0]
-open("README.md","w").write(head+"## Duka Executive Summary\n"+exec_sum.replace("## Executive Summary\n","")+"\n\n> Numbers above come from the stand-in `duka_sales.csv`; re-run `python build_duka.py` after replacing it with the course file and paste the refreshed summary.\n")
+open("README.md","w").write(head+"## Duka Executive Summary\n"+exec_sum.replace("## Executive Summary\n","")+"\n")
 print(exec_sum)

@@ -15,9 +15,7 @@ python build_duka.py           # Engagement 1: rebuilds notebook, Excel workbook
 jupyter nbconvert --to notebook --execute --inplace duka_sales_exploration.ipynb   # Engagement 1 (run on its own)
 jupyter nbconvert --to notebook --execute --inplace agent_cleanup.ipynb   # Engagement 2 (imports cleaning_pipeline.py)
 ```
-Do not change the seeds. `build_duka.py` needs LibreOffice (`soffice`) only to create the PivotTable; `duka_sales_exploration.ipynb` can also be opened and run on its own in Jupyter.
-
-> **Note on Part A of `generate_data.py`:** it currently holds a clearly-marked stand-in Duka generator. Before submitting, paste the course Practicals generator (seed 2026) there unchanged and re-run `python build_duka.py`, then refresh the Executive Summary below.
+Do not change the seeds. `build_duka.py` (with its helper `make_pivot.py`) needs LibreOffice (`soffice`) only to create the real PivotTable; the committed `excel/*_recalc_check.csv` files let `duka_sales_exploration.ipynb` run on its own in Jupyter.
 
 ## Engagement 2 — before/after row count
 | Stage | Rows |
@@ -29,10 +27,8 @@ Do not change the seeds. `build_duka.py` needs LibreOffice (`soffice`) only to c
 Also: 20 amounts imputed (median by type, flagged `amount_imputed`), 40 IQR outliers flagged (`is_outlier`) including five identical KES 250,000 values held for verification.
 
 ## Duka Executive Summary
-- **Nairobi** is the top branch with KES 22,925,800 (32.4% of the KES 70,678,600 total revenue across 1,000 orders).
-- **Laptop** is the top product by revenue at KES 18,972,000, while **Headphones** leads on units with 608 sold.
-- Weekend orders are 27.9% of orders (279), averaging KES 65,970 per order vs KES 72,501 on weekdays.
-- **March** was the best month (KES 13,930,900) and **May** the worst (KES 9,832,700), a 41.7% gap.
-- 71 Premium online orders from Nairobi and Mombasa generated KES 8,784,000, i.e. 12.4% of revenue.
-
-> Numbers above come from the stand-in `duka_sales.csv`; re-run `python build_duka.py` after replacing it with the course file and paste the refreshed summary.
+- **Nairobi** is the top branch with KES 26,106,100 (36.4% of the KES 71,792,500 total revenue across 1,000 orders).
+- **Laptop** is the top product by revenue at KES 41,535,000, while **Tablet** leads on units with 691 sold.
+- Weekend orders are 27.7% of orders (277), averaging KES 71,972 per order vs KES 71,724 on weekdays.
+- **April** was the best month (KES 13,518,300) and **June** the worst (KES 10,903,400), a 24.0% gap.
+- 83 Premium online orders from Nairobi and Mombasa generated KES 10,218,000, i.e. 14.2% of revenue.
